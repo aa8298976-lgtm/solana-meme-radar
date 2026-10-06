@@ -1,4 +1,3 @@
-
 import os, json, time, sqlite3, traceback, math
 from datetime import datetime, timezone
 
@@ -11,7 +10,7 @@ DEX = "https://api.dexscreener.com"
 HELIUS = "https://api.helius.xyz"
 SOLANA_RPC = "https://api.mainnet-beta.solana.com"
 WSOL = "So11111111111111111111111111111111111111112"
-VERSION = "5.0-high-precision"
+VERSION = "5.1.1-learning-fixed"
 DB = "radar_v5.db"
 
 # First verified Smart Money wallet supplied by the user.
@@ -443,23 +442,63 @@ def scan():
     return rows
 
 def evaluate_outcomes():
-    """Label snapshots using future snapshots of the same token (no look-ahead)."""
+    """Safely label snapshots using later snapshots of the same token."""
     init_db()
     horizons=[("5m",300),("15m",900),("1h",3600),("4h",14400),("24h",86400)]
     c=db()
-    snaps=c.execute("SELECT id,token,ts,price FROM snapshots WHERE price>0 ORDER BY token,ts").fetchall()
-    existing={r[0]:r for r in c.execute(
-        "SELECT snapshot_id,return_5m,return_15m,return_1h,return_4h,return_24h FROM outcomes").fetchall()}
+    # Older builds did not declare snapshot_id UNIQUE. Add a unique index so
+    # INSERT ... ON CONFLICT(snapshot_id) is valid and duplicate labels are avoided.
+    try:
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_outcomes_snapshot_id ON outcomes(snapshot_id)")
+    except Exception:
+        pass
+    raw_snaps=c.execute("SELECT id,token,ts,price FROM snapshots WHERE price IS NOT NULL AND price>0 ORDER BY token,ts").fetchall()
+    raw_existing=c.execute("SELECT snapshot_id,return_5m,return_15m,return_1h,return_4h,return_24h FROM outcomes").fetchall()
+    c.close()
+
+    snaps=[]
+    for sid,token,ts,p0 in raw_snaps:
+        try:
+            snaps.append((int(sid),str(token),float(ts),float(p0)))
+        except (TypeError,ValueError):
+            continue
+
+    existing={}
+    for row in raw_existing:
+        try:
+            existing[int(row[0])] = row
+        except (TypeError,ValueError):
+            continue
+
     by={}
-    for r in snaps: by.setdefault(r[1],[]).append(r)
+    for row in snaps:
+        by.setdefault(row[1],[]).append(row)
+
     updated=0
+    c=db()
     for sid,token,ts,p0 in snaps:
-        vals=list(existing.get(sid,(sid,None,None,None,None,None)))
+        old=existing.get(sid)
+        vals=list(old) if old else [sid,None,None,None,None,None]
         for idx,(_,secs) in enumerate(horizons,1):
-            if vals[idx] is not None: continue
-            target=ts+secs
-            future=next((z for z in by.get(token,[]) if z[1]>=target and z[0]>sid),None)
-            if future and future[3]>0: vals[idx]=(future[3]/p0-1)*100
+            if vals[idx] is not None:
+                continue
+            target=ts+float(secs)
+            future=None
+            for z in by.get(token,[]):
+                try:
+                    if float(z[2]) >= target and int(z[0]) > sid:
+                        future=z
+                        break
+                except (TypeError,ValueError,IndexError):
+                    continue
+            if future is not None:
+                try:
+                    future_price=float(future[3])
+                    if future_price > 0 and p0 > 0:
+                        vals[idx]=(future_price/p0-1.0)*100.0
+                except (TypeError,ValueError,ZeroDivisionError):
+                    pass
+
         if any(v is not None for v in vals[1:]):
             c.execute("""INSERT INTO outcomes(snapshot_id,token,captured_ts,return_5m,return_15m,return_1h,return_4h,return_24h)
                          VALUES(?,?,?,?,?,?,?,?)
