@@ -590,111 +590,209 @@ def learned_score(alpha,prob):
     return alpha if prob is None else max(0,min(100,.70*alpha+30*prob))
 
 
-# ---------- UI ----------
+
+# ---------- V6 CLEAN UI ----------
 init_db()
-interval=max(45,i(secret("DEX_SCAN_SECONDS","60"),60))
-st_autorefresh(interval=interval*1000,key="v5refresh")
+interval = max(45, i(secret("DEX_SCAN_SECONDS", "60"), 60))
+st_autorefresh(interval=interval * 1000, key="v6refresh")
+
+st.markdown("""
+<style>
+.block-container {padding-top: 1.4rem; padding-bottom: 2rem; max-width: 1450px;}
+[data-testid="stMetric"] {border: 1px solid rgba(128,128,128,.20); border-radius: 16px; padding: 12px 14px;}
+.radar-card {
+    border: 1px solid rgba(128,128,128,.22);
+    border-radius: 18px;
+    padding: 18px;
+    margin: 8px 0 14px 0;
+    background: rgba(128,128,128,.035);
+}
+.radar-score {font-size: 34px; font-weight: 800; line-height: 1;}
+.radar-muted {opacity: .68; font-size: 13px;}
+.radar-pill {
+    display:inline-block; padding:5px 10px; border-radius:999px;
+    border:1px solid rgba(128,128,128,.25); font-size:12px; margin-right:5px;
+}
+.radar-kpi {font-size: 16px; font-weight: 700;}
+</style>
+""", unsafe_allow_html=True)
 
 with st.sidebar:
-    st.header("🎯 V5 High Precision")
-    st.write(f"Auto scan: هر {interval} ثانیه")
-    if st.button("🔄 Scan now",use_container_width=True):
-        with st.spinner("در حال اسکن دقیق..."):
+    st.header("⚙️ Radar")
+    st.caption(f"V6 Clean UI · auto scan هر {interval} ثانیه")
+
+    if st.button("🔄 Scan now", use_container_width=True):
+        with st.spinner("در حال اسکن..."):
             scan()
         st.success("اسکن انجام شد.")
-    if st.button("🧪 Evaluate outcomes",use_container_width=True):
-        n=evaluate_outcomes()
-        st.success(f"{n} snapshot بررسی شد.")
-    if st.button("🧠 Train learning model",use_container_width=True):
-        with st.spinner("آموزش مدل با split زمانی..."):
-            m=train_models()
-        st.success("مدل‌های فعال: "+(", ".join(m.keys()) if m else "داده کافی نیست"))
-    st.caption(f"Version {VERSION}")
-    st.info("هدف V5: سیگنال کمتر، کیفیت بالاتر؛ Score و Confidence جدا هستند و Risk دروازه‌ی سخت دارد.")
 
-st.title("🎯 Solana Meme Radar V5 — High Precision")
-st.caption("Research/alert engine — not financial advice and not auto-trading.")
+    with st.expander("🧠 Learning", expanded=False):
+        if st.button("Evaluate outcomes", use_container_width=True):
+            n = evaluate_outcomes()
+            st.success(f"{n} snapshot بررسی شد.")
+        if st.button("Train learning model", use_container_width=True):
+            with st.spinner("آموزش مدل..."):
+                m = train_models()
+            st.success("مدل‌های فعال: " + (", ".join(m.keys()) if m else "داده کافی نیست"))
 
-if "last_scan" not in st.session_state or time.time()-st.session_state.last_scan>interval-5:
-    scan(); st.session_state.last_scan=time.time()
+    with st.expander("🩺 Provider Health", expanded=False):
+        st.json({
+            "DEX Screener": hget("dexscreener"),
+            "Helius Wallet API": hget("helius_wallet", "NOT_CONFIGURED"),
+            "Solana RPC": hget("solana_rpc"),
+            "Smart Money": hget("smart_money", "NOT_CONFIGURED"),
+            "Last scan": hget("last_scan", "—")
+        })
 
-c=db()
-df=pd.read_sql_query("""SELECT * FROM snapshots
-                        WHERE id IN (SELECT MAX(id) FROM snapshots GROUP BY token)
-                        ORDER BY alpha DESC, confidence DESC LIMIT 100""",c)
-wdf=pd.read_sql_query("""SELECT wallet,label,weight,token,datetime(ts,'unixepoch') AS time,
-                                amount,signature FROM smart_buys
-                         ORDER BY ts DESC LIMIT 100""",c)
-edf=pd.read_sql_query("""SELECT token,COUNT(*) alerts,AVG(return_5m) avg_return_5m,
-                                MAX(return_5m) max_return_5m
-                         FROM outcomes GROUP BY token ORDER BY avg_return_5m DESC LIMIT 30""",c)
+    with st.expander("ℹ️ About", expanded=False):
+        st.caption("Research/alert engine؛ نه مشاوره مالی و نه اجرای خودکار معامله.")
+
+st.markdown("## 🎯 Solana Meme Radar")
+st.caption("Smart Money Intelligence · Clean V6")
+
+if "last_scan" not in st.session_state or time.time() - st.session_state.last_scan > interval - 5:
+    try:
+        scan()
+        st.session_state.last_scan = time.time()
+    except Exception as ex:
+        st.warning(f"Scan error: {ex}")
+
+c = db()
+df = pd.read_sql_query("""
+    SELECT * FROM snapshots
+    WHERE id IN (SELECT MAX(id) FROM snapshots GROUP BY token)
+    ORDER BY alpha DESC, confidence DESC
+    LIMIT 100
+""", c)
+wdf = pd.read_sql_query("""
+    SELECT wallet,label,weight,token,datetime(ts,'unixepoch') AS time,
+           amount,signature
+    FROM smart_buys ORDER BY ts DESC LIMIT 100
+""", c)
+edf = pd.read_sql_query("""
+    SELECT token,COUNT(*) alerts,AVG(return_5m) avg_return_5m,
+           MAX(return_5m) max_return_5m
+    FROM outcomes GROUP BY token ORDER BY avg_return_5m DESC LIMIT 30
+""", c)
 c.close()
 
-a,b,d,e=st.columns(4)
-a.metric("Tracked",len(df))
-b.metric("Confirmed",int((df.alpha>=88).sum()) if not df.empty else 0)
-d.metric("Early",int(((df.alpha>=76)&(df.alpha<88)).sum()) if not df.empty else 0)
-e.metric("Smart hits",int(df.smart_hits.sum()) if not df.empty else 0)
+# Top counters
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Tracked", len(df))
+m2.metric("🚀 Confirmed", int((df.alpha >= 88).sum()) if not df.empty else 0)
+m3.metric("🟢 Early", int(((df.alpha >= 76) & (df.alpha < 88)).sum()) if not df.empty else 0)
+m4.metric("🐋 Smart Money", int(df.smart_hits.sum()) if not df.empty else 0)
+
+st.markdown("### 🔥 Top Signals")
 
 if df.empty:
-    st.warning("هنوز داده‌ای نیست. Scan now را بزن یا چند ثانیه صبر کن.")
+    st.info("هنوز داده‌ای نیست؛ چند ثانیه صبر کن یا Scan now را بزن.")
 else:
-    cols=["signal","symbol","alpha","confidence","risk","smart_hits","smart_wallets",
-          "volume_accel","buy_sell_ratio","liq","pc5","top20_pct","age_min","url"]
-    st.dataframe(df[cols],use_container_width=True,hide_index=True,
-                 column_config={"url":st.column_config.LinkColumn("DEX"),
-                                "alpha":st.column_config.NumberColumn("Alpha",format="%.0f"),
-                                "confidence":st.column_config.NumberColumn("Confidence",format="%.0f%%"),
-                                "risk":st.column_config.NumberColumn("Risk",format="%.0f"),
-                                "volume_accel":st.column_config.NumberColumn("Vol accel",format="%.1fx"),
-                                "buy_sell_ratio":st.column_config.NumberColumn("B/S",format="%.2fx"),
-                                "liq":st.column_config.NumberColumn("Liquidity",format="$%.0f"),
-                                "pc5":st.column_config.NumberColumn("5m",format="%.1f%%"),
-                                "top20_pct":st.column_config.NumberColumn("Top20",format="%.1f%%")})
+    top = df.head(8)
 
-    st.subheader("🔎 چرا این توکن؟")
-    for _,r in df.head(5).iterrows():
-        with st.expander(f"{r['signal']}  {r['symbol']} — Alpha {r['alpha']:.0f} / Confidence {r['confidence']:.0f}% / Risk {r['risk']:.0f}"):
-            positives=[]
-            if r["smart_hits"]>=2: positives.append(f"همگرایی {int(r['smart_hits'])} کیف پول Smart Money")
-            elif r["smart_hits"]==1: positives.append("فعالیت یک Smart Money تأییدشده")
-            if r["volume_accel"]>=2: positives.append(f"شتاب حجم {r['volume_accel']:.1f}x")
-            if r["buy_sell_ratio"]>=1.5: positives.append(f"نسبت خرید/فروش {r['buy_sell_ratio']:.1f}x")
-            if r["pc5"]>=5: positives.append(f"مومنتوم ۵ دقیقه‌ای +{r['pc5']:.1f}%")
-            negatives=[]
-            if r["top20_pct"]>=45: negatives.append(f"تمرکز Top20 برابر {r['top20_pct']:.1f}%")
-            if r["liq"]<30000: negatives.append("نقدینگی پایین")
-            if r["risk"]>=40: negatives.append(f"Risk={r['risk']:.0f}")
-            st.write("**مثبت:**", " • ".join(positives[:3]) or "داده مثبت کافی نیست")
-            st.write("**منفی:**", " • ".join(negatives[:3]) or "پرچم منفی مهمی ثبت نشده")
+    for _, r in top.iterrows():
+        sig = str(r["signal"])
+        alpha = float(r["alpha"])
+        conf = float(r["confidence"])
+        risk = float(r["risk"])
+        symbol = str(r["symbol"])
+        name = str(r["name"])
 
-st.subheader("🧠 Smart Money Feed")
-if wdf.empty:
-    st.info("برای Smart Money واقعی، HELIUS_API_KEY لازم است.")
-else:
-    st.dataframe(wdf,use_container_width=True,hide_index=True,
-                 column_config={"signature":st.column_config.LinkColumn("TX")})
+        if "DANGER" in sig:
+            badge = "🔴 DANGER"
+        elif "CONFIRMED" in sig:
+            badge = "🚀 CONFIRMED"
+        elif "EARLY" in sig:
+            badge = "🟢 EARLY PUMP"
+        elif "WATCH" in sig:
+            badge = "🟡 WATCH"
+        else:
+            badge = "⚪ LOW"
 
-st.subheader("📈 Outcome / Backtest")
-if edf.empty:
-    st.info("هنوز نتیجه‌ای ثبت نشده؛ بعد از جمع شدن snapshotها، Evaluate outcomes را اجرا کن.")
-else:
-    st.dataframe(edf,use_container_width=True,hide_index=True)
+        left, right = st.columns([4, 1])
+        with left:
+            st.markdown(f"""
+            <div class="radar-card">
+              <div class="radar-muted">{badge}</div>
+              <div style="font-size:25px;font-weight:800;margin-top:4px;">${symbol}</div>
+              <div class="radar-muted">{name}</div>
+              <div style="margin-top:16px;">
+                <span class="radar-score">{alpha:.0f}</span>
+                <span class="radar-muted"> / 100 Alpha</span>
+              </div>
+              <div style="margin-top:12px;">
+                <span class="radar-pill">Confidence {conf:.0f}%</span>
+                <span class="radar-pill">Risk {risk:.0f}</span>
+                <span class="radar-pill">🐋 {int(r['smart_hits'])} Smart Money</span>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-st.subheader("🧠 Learning Engine")
-lm=latest_models()
-if not lm:
-    st.info("مدل هنوز فعال نیست؛ بعد از جمع شدن حداقل حدود ۱۲۰ snapshot دارای outcome، Train learning model را اجرا کن.")
-else:
-    model_rows=[{"Horizon":h,"Samples":v[1],"Validation AUC":v[2],"Brier":v[3]} for h,v in lm.items()]
-    st.dataframe(pd.DataFrame(model_rows),use_container_width=True,hide_index=True)
-    st.caption("آموزش به‌صورت زمانی انجام می‌شود؛ مدل جایگزین فیلترهای Risk/Security نیست.")
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("Volume", f"{float(r['volume_accel']):.1f}x")
+            p2.metric("Buy / Sell", f"{float(r['buy_sell_ratio']):.2f}x")
+            p3.metric("Liquidity", f"${float(r['liq']):,.0f}")
+            p4.metric("5m", f"{float(r['pc5']):+.1f}%")
 
-st.subheader("🩺 Provider Health")
-st.json({
-  "DEX Screener":hget("dexscreener"),
-  "Helius Wallet API":hget("helius_wallet","NOT_CONFIGURED"),
-  "Solana RPC":hget("solana_rpc"),
-  "Smart Money":hget("smart_money","NOT_CONFIGURED"),
-  "Last scan":hget("last_scan","—")
-})
+            pos = []
+            neg = []
+            if int(r["smart_hits"]) >= 2:
+                pos.append(f"{int(r['smart_hits'])} کیف پول Smart Money همگرا شده‌اند")
+            elif int(r["smart_hits"]) == 1:
+                pos.append("فعالیت Smart Money تأیید شده")
+            if float(r["volume_accel"]) >= 2:
+                pos.append(f"شتاب حجم {float(r['volume_accel']):.1f}x")
+            if float(r["buy_sell_ratio"]) >= 1.5:
+                pos.append(f"نسبت خرید/فروش {float(r['buy_sell_ratio']):.1f}x")
+            if float(r["pc5"]) >= 5:
+                pos.append(f"مومنتوم ۵ دقیقه‌ای +{float(r['pc5']):.1f}%")
+            if float(r["liq"]) >= 75000:
+                pos.append(f"نقدینگی ${float(r['liq']):,.0f}")
+
+            if float(r["top20_pct"]) >= 45:
+                neg.append(f"تمرکز Top20: {float(r['top20_pct']):.1f}%")
+            if float(r["liq"]) < 30000:
+                neg.append("نقدینگی پایین")
+            if risk >= 40:
+                neg.append(f"Risk = {risk:.0f}")
+            if float(r["pc5"]) < -5:
+                neg.append("مومنتوم کوتاه‌مدت منفی")
+
+            with st.expander("🔎 Why this token?", expanded=False):
+                st.write("**مثبت:** " + (" • ".join(pos[:4]) if pos else "داده مثبت کافی نیست"))
+                st.write("**ریسک:** " + (" • ".join(neg[:3]) if neg else "پرچم منفی مهمی ثبت نشده"))
+                st.link_button("باز کردن در DEX Screener", str(r["url"]))
+
+        with right:
+            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+st.markdown("---")
+
+with st.expander("🐋 Smart Money Feed", expanded=False):
+    if wdf.empty:
+        st.info("برای Smart Money واقعی، HELIUS_API_KEY لازم است.")
+    else:
+        st.dataframe(
+            wdf,
+            use_container_width=True,
+            hide_index=True,
+            column_config={"signature": st.column_config.LinkColumn("TX")}
+        )
+
+with st.expander("📈 Outcome / Backtest", expanded=False):
+    if edf.empty:
+        st.info("هنوز نتیجه‌ای ثبت نشده؛ با جمع شدن snapshotها می‌توانی Evaluate outcomes را اجرا کنی.")
+    else:
+        st.dataframe(edf, use_container_width=True, hide_index=True)
+
+with st.expander("🧠 Learning Engine", expanded=False):
+    lm = latest_models()
+    if not lm:
+        st.info("مدل هنوز فعال نیست؛ پس از جمع شدن داده کافی، Train learning model را اجرا کن.")
+    else:
+        model_rows = [
+            {"Horizon": h, "Samples": v[1], "Validation AUC": v[2], "Brier": v[3]}
+            for h, v in lm.items()
+        ]
+        st.dataframe(pd.DataFrame(model_rows), use_container_width=True, hide_index=True)
+        st.caption("مدل فقط Alpha را تنظیم می‌کند و جایگزین Risk/Security نیست.")
